@@ -15,6 +15,10 @@ OPEN_ORG=false
 REMOVE_ONLY=false
 DEPLOY_ONLY=false
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+RED='\033[0;31m'
+NC='\033[0m' # Normal
+REVERSE='\033[7m'
+
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -54,6 +58,7 @@ done
 if [ $SILENT != 'true' ]
 then
   ## Get revision ID
+  echo "🚀 Source branch for deployment: " $BRANCH
   echo "🚀 Please provide the GIT revision ID, this will be used to diff against your current HEAD (i.e. release/1.39 or HEAD~1)"
   read -p "🚀 GIT Revision ID: " GIT_REV
   echo
@@ -63,10 +68,21 @@ else
   echo "🚀 Default org:" $DEFAULT_ORG
 fi
 
+## Sync local
+echo "🚀 Syncing local git repos..."
+git reset origin/$BRANCH --hard
+git pull
+git checkout $GIT_REV
+git reset origin/$GIT_REV --hard
+git pull
+git checkout $BRANCH
+
+## Get additions
+git diff $GIT_REV --diff-filter=A --name-only --no-renames -- force-app/ ':!force-app/main/default/profiles' > tempa
 ## Get changes
-git diff $GIT_REV --diff-filter=ACMTUXB --name-only --no-renames -- force-app/ > temp
+git diff $GIT_REV --diff-filter=CMTUXB --name-only --no-renames -- force-app/ ':!force-app/main/default/profiles' > temp
 ## Get deleted
-git diff $GIT_REV --diff-filter=D --name-only --no-renames -- force-app/ > tempd
+git diff $GIT_REV --diff-filter=D --name-only --no-renames -- force-app/ ':!force-app/main/default/profiles' > tempd
 
 if [ $SILENT != 'true' ]
 then
@@ -74,7 +90,11 @@ then
   if [ $REMOVE_ONLY != 'true' ]
   then
     echo
-    echo "🚀 Deployment manifest:"
+    echo "🚀 Added manifest:"
+    echo "   ===================="
+    cat tempa
+    echo
+    echo "🚀 Changed manifest:"
     echo "   ===================="
     cat temp
   fi
@@ -97,6 +117,9 @@ then
       ;;
   esac
 fi
+
+# Combine added & changed
+cat tempa >> temp
 
 # ** Convert manifest to SFDX format
 # Convert newlines to commas
@@ -136,16 +159,17 @@ then
   if [ $REMOVE_ONLY != 'true' ]
   then
     echo
-    echo "sfdx force:source:deploy -u $ORG -p $(<changes.txt)" 
+    echo "sfdx force:source:deploy -u $ORG -p \"$(<changes.txt)\"" 
   fi
   if [ $DEPLOY_ONLY != 'true' ]
   then
     echo
-    echo "🚀 sfdx force:source:delete -r -u $ORG -p $(<deleted.txt)"
+    echo "🚀 sfdx force:source:delete -r -u $ORG -p \"$(<deleted.txt)\""
   fi
 
   echo
-  read -p "🚀 Type D to deploy execute the deployment commands above (D): " ANSWER
+  BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  read -p "🚀 Type D to deploy execute the deployment commands with code from branch $BRANCH above (D): " ANSWER
   case ${ANSWER:0:1} in
       d|D )
       ;;
@@ -166,12 +190,9 @@ then
   if [ $DEPLOY_ONLY != 'true' ]
   then
     echo
-    git stash push &> /dev/null
-    git checkout $GIT_REV -- force-app/ &> /dev/null
+    git checkout $GIT_REV -- force-app/
     sfdx force:source:delete -r -u $ORG -p $(<deleted.txt)
-    # git checkout $BRANCH -- force-app/ &> /dev/null
-    git reset $BRANCH --hard &> /dev/null
-    git stash pop &> /dev/null
+    git checkout $BRANCH -- force-app/
   fi
   
   echo
@@ -188,7 +209,7 @@ then
 else
   if [[ -s changes.txt ]]
   then
-    echo "🚀 Deploying changes and deletions against default org:" $DEFAULT_ORG
+    echo "🚀 Deploying changes and/or deletions against default org:" $DEFAULT_ORG
     if [ $REMOVE_ONLY != 'true' ]
     then
       echo
@@ -196,8 +217,11 @@ else
     fi
     if [ $DEPLOY_ONLY != 'true' ]
     then
+      if [[ -s deleted.txt ]]
+      then
       echo
-      sfdx force:source:delete -p $(<deleted.txt)
+        sfdx force:source:delete -p $(<deleted.txt)
+      fi
     fi
   else
     echo "🚀 No changes to deploy!"

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+cp deploy /usr/local/bin
+cp deploy.sh /usr/local/bin
